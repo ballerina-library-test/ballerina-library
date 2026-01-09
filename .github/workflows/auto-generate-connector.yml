@@ -1,0 +1,98 @@
+name: Auto Generate Connector
+
+on:
+  workflow_call:
+    inputs:
+      openapi-url:
+        required: true
+        type: string
+      ballerina-version:
+        required: false
+        type: string
+        default: "2201.13.0"
+      quiet-mode:
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      BALLERINA_BOT_TOKEN:
+        required: true
+      ANTHROPIC_API_KEY:
+        required: true
+
+jobs:
+  generate:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BALLERINA_BOT_TOKEN }}
+
+      - name: Setup Ballerina
+        uses: ballerina-platform/setup-ballerina@v1.1.3
+        with:
+          version: ${{ inputs.ballerina-version }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "ballerina-bot"
+          git config user.email "ballerina-bot@ballerina.org"
+
+      - name: Prepare OpenAPI spec
+        run: |
+          mkdir -p docs/spec
+          cd docs/spec
+          curl -L "${{ inputs.openapi-url }}" -o openapi.yaml
+
+      - name: Clone connector automator
+        run: |
+          git clone -b connector-automation https://github.com/nostoc/ballerina-library.git temp
+          cp -r temp/connector_automator .
+          rm -rf temp
+
+      - name: Run connector generation
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          cd connector_automator
+
+          cat > Config.toml <<EOF
+          [connector_automator.utils]
+          apiKey="${ANTHROPIC_API_KEY}"
+          EOF
+
+          bal run -- pipeline \
+            "${GITHUB_WORKSPACE}/docs/spec/openapi.yaml" \
+            "${GITHUB_WORKSPACE}" \
+            yes \
+            ${{ inputs.quiet-mode && 'quiet' || '' }}
+
+      - name: Cleanup
+        run: |
+          rm -rf connector_automator
+          find . -name "Dependencies.toml" -delete
+          find . -name "*.backup" -delete
+          find . -name "target" -type d -exec rm -rf {} +
+
+      - name: Commit changes
+        run: |
+          git checkout -b auto-generate-connector
+          git add .
+          git commit -m "[AUTOMATED][AI] Generate connector from OpenAPI" || echo "No changes"
+
+      - name: Push branch
+        run: git push origin auto-generate-connector
+        env:
+          GITHUB_TOKEN: ${{ secrets.BALLERINA_BOT_TOKEN }}
+
+      - name: Create Pull Request
+        run: |
+          gh pr create \
+            --title "[AUTOMATED][AI] Generate connector from OpenAPI" \
+            --body "Auto-generated connector using OpenAPI update" \
+            --base main \
+            --head auto-generate-connector
+        env:
+          GITHUB_TOKEN: ${{ secrets.BALLERINA_BOT_TOKEN }}
