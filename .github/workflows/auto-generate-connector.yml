@@ -61,6 +61,9 @@ jobs:
           cat > Config.toml <<EOF
           [connector_automator.utils]
           apiKey="${ANTHROPIC_API_KEY}"
+
+          [connector_automator.code_fixer]
+          maxIterations = 3
           EOF
 
           bal run -- pipeline \
