@@ -52,6 +52,11 @@ jobs:
           cp -r temp/connector_automator .
           rm -rf temp
 
+      - name: Patch connector automator bugs
+        run: |
+          # Fix bug: "if licenseFile is string" is always true, causes substring error on empty string
+          sed -i 's/if licenseFile is string {/if licenseFile.length() > 0 {/' connector_automator/main.bal
+
       - name: Run connector generation
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
