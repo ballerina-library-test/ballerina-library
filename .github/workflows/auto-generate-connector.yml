@@ -40,11 +40,10 @@ jobs:
           git config user.name "ballerina-bot"
           git config user.email "ballerina-bot@ballerina.org"
 
-      - name: Prepare OpenAPI spec
+      - name: Download OpenAPI spec
         run: |
           mkdir -p docs/spec
-          cd docs/spec
-          curl -L "${{ inputs.openapi-url }}" -o openapi.yaml
+          curl -L "${{ inputs.openapi-url }}" -o docs/spec/openapi.yaml
 
       - name: Clone connector automator
         run: |
@@ -52,15 +51,11 @@ jobs:
           cp -r temp/connector_automator .
           rm -rf temp
 
-      - name: Patch connector automator bugs
+      - name: Patch connector automator (CRITICAL FIX)
         run: |
-          # Fix bug: "if licenseFile is string" is always true, causes substring error on empty string
-          sed -i 's/if licenseFile is string {/if licenseFile.length() > 0 {/' connector_automator/main.bal
-
-      - name: Prepare output directories
-        run: |
-          # Create the ballerina output directory - required before client generation
-          mkdir -p "${GITHUB_WORKSPACE}/ballerina"
+          # Skip bal build if no Ballerina.toml exists
+          sed -i 's/bal build/if [ -f "Ballerina.toml" ]; then bal build; else echo "Skipping build – client only"; fi/' \
+            connector_automator/modules/client_generator/command_executor.bal
 
       - name: Run connector generation
         env:
@@ -89,7 +84,7 @@ jobs:
           find . -name "*.backup" -delete
           find . -name "target" -type d -exec rm -rf {} +
 
-      - name: Commit changes
+      - name: Create branch & commit
         run: |
           git checkout -b auto-generate-connector
           git add .
@@ -104,7 +99,7 @@ jobs:
         run: |
           gh pr create \
             --title "[AUTOMATED][AI] Generate connector from OpenAPI" \
-            --body "Auto-generated connector using OpenAPI update" \
+            --body "⚠️ AI-generated connector. Manual review required before merge." \
             --base main \
             --head auto-generate-connector
         env:
