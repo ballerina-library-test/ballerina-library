@@ -47,19 +47,7 @@ jobs:
       - name: Download OpenAPI spec
         run: |
           mkdir -p docs/spec
-          # Try to detect format and convert YAML to JSON if needed to avoid parser size limits
-          SPEC_URL="${{ inputs.openapi-url }}"
-          if [[ "$SPEC_URL" == *.yaml ]] || [[ "$SPEC_URL" == *.yml ]]; then
-            echo "Downloading YAML spec and converting to JSON to avoid size limits..."
-            curl -L "$SPEC_URL" -o docs/spec/openapi.yaml
-            # Use Python to convert YAML to JSON (more reliable for large files)
-            python3 -c "import yaml, json, sys; json.dump(yaml.safe_load(open('docs/spec/openapi.yaml')), open('docs/spec/openapi.json', 'w'), indent=2)"
-            rm docs/spec/openapi.yaml
-            echo "Converted to JSON format"
-          else
-            echo "Downloading JSON spec..."
-            curl -L "$SPEC_URL" -o docs/spec/openapi.json
-          fi
+          curl -L "${{ inputs.openapi-url }}" -o docs/spec/openapi.yaml
 
       # ✅ CLONE YOUR OWN STABLE FORK — NOT nostoc
       - name: Clone connector automator
@@ -119,7 +107,7 @@ jobs:
           EOF
 
           bal run -- pipeline \
-            "${GITHUB_WORKSPACE}/docs/spec/openapi.json" \
+            "${GITHUB_WORKSPACE}/docs/spec/openapi.yaml" \
             "${GITHUB_WORKSPACE}" \
             yes \
             ${{ inputs.quiet-mode && 'quiet' || '' }}
