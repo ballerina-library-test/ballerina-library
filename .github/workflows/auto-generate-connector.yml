@@ -78,14 +78,14 @@ jobs:
           # The OpenAPI client generator may emit only `*.bal` files, so we scaffold the package upfront.
           if [ ! -f "${GITHUB_WORKSPACE}/ballerina/Ballerina.toml" ]; then
             cat > "${GITHUB_WORKSPACE}/ballerina/Ballerina.toml" <<'EOF'
-            [package]
-            org = "ballerina_library_test"
-            name = "generated_connector"
-            version = "0.1.0"
+              [package]
+              org = "ballerina_library_test"
+              name = "generated_connector"
+              version = "0.1.0"
 
-            [build-options]
-            observabilityIncluded = true
-            EOF
+              [build-options]
+              observabilityIncluded = true
+              EOF
           fi
 
       - name: Run connector generation
