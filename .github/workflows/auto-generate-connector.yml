@@ -68,6 +68,11 @@ jobs:
           cd connector_automator
           bal build
 
+      - name: Prepare connector output directory
+        run: |
+          # `bal openapi --mode client -o <dir>` expects the output directory to exist.
+          mkdir -p "${GITHUB_WORKSPACE}/ballerina"
+
       - name: Run connector generation
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
