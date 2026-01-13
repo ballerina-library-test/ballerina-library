@@ -6,6 +6,10 @@ on:
       openapi-url:
         required: true
         type: string
+      connector-name:
+        required: false
+        type: string
+        default: "generated_connector"
       ballerina-version:
         required: false
         type: string
@@ -117,21 +121,21 @@ jobs:
 
       - name: Create branch & commit
         run: |
-          git checkout -b auto-generate-connector
+          git checkout -b auto-generate-${{ inputs.connector-name }}
           git add .
-          git commit -m "[AUTOMATED][AI] Generate connector from OpenAPI" || echo "No changes"
+          git commit -m "[AUTOMATED][AI] Generate ${{ inputs.connector-name }} connector from OpenAPI" || echo "No changes"
 
       - name: Push branch
-        run: git push origin auto-generate-connector
+        run: git push origin auto-generate-${{ inputs.connector-name }}
         env:
           GITHUB_TOKEN: ${{ secrets.BALLERINA_BOT_TOKEN }}
 
       - name: Create Pull Request
         run: |
           gh pr create \
-            --title "[AUTOMATED][AI] Generate connector from OpenAPI" \
-            --body "⚠️ AI-generated connector. Manual review required before merge." \
+            --title "[AUTOMATED][AI] Generate ${{ inputs.connector-name }} connector" \
+            --body "⚠️ AI-generated connector for **${{ inputs.connector-name }}**. Manual review required before merge." \
             --base main \
-            --head auto-generate-connector
+            --head auto-generate-${{ inputs.connector-name }}
         env:
           GITHUB_TOKEN: ${{ secrets.BALLERINA_BOT_TOKEN }}
