@@ -57,6 +57,11 @@ jobs:
           # Fix bug: "if licenseFile is string" is always true, causes substring error on empty string
           sed -i 's/if licenseFile is string {/if licenseFile.length() > 0 {/' connector_automator/main.bal
 
+      - name: Prepare output directories
+        run: |
+          # Create the ballerina output directory - required before client generation
+          mkdir -p "${GITHUB_WORKSPACE}/ballerina"
+
       - name: Run connector generation
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
