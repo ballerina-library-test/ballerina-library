@@ -52,6 +52,17 @@ jobs:
           cp -r temp/connector_automator .
           rm -rf temp
 
+      - name: Patch connector automator (license substring crash)
+        run: |
+          # Upstream bug: `licenseFile` is always a `string`, so `if licenseFile is string` is always true.
+          # When no license option is provided, `licenseFile` is "" and `substring(8)` crashes.
+          perl -pi -e 's/if\s+licenseFile\s+is\s+string\s*\{/if licenseFile.length() > 0 {/' connector_automator/main.bal
+          # Fail fast if the expected fix did not apply (prevents a confusing runtime crash later).
+          if grep -n "if licenseFile is string" connector_automator/main.bal; then
+            echo "Patch did not apply; connector_automator/main.bal still contains: if licenseFile is string" >&2
+            exit 1
+          fi
+
       - name: Verify automator builds
         run: |
           cd connector_automator
