@@ -50,6 +50,17 @@ jobs:
           git clone -b connector-automation https://github.com/nostoc/ballerina-library.git temp
           cp -r temp/connector_automator .
           rm -rf temp
+      - name: Patch connector automator critical bugs
+        run: |
+          # 1. Fix licenseFile empty-string crash
+          sed -i 's/if licenseFile is string {/if licenseFile.length() > 0 {/' connector_automator/main.bal
+
+          # 2. Fix substring crash when connector name is empty
+          sed -i 's/\.substring(8)/.length() > 8 ? .substring(8) : ""/g' connector_automator/main.bal
+
+          # 3. Skip bal build for client-only generation
+          sed -i 's/bal build/if [ -f "Ballerina.toml" ]; then bal build; else echo "Skipping build – client only"; fi/' \
+            connector_automator/modules/client_generator/command_executor.bal
 
       - name: Patch connector automator (CRITICAL FIX)
         run: |
