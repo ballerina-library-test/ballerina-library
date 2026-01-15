@@ -9,7 +9,7 @@ on:
 jobs:
   generate-stripe-connector:
     name: Generate Stripe Connector
-    uses: ./.github/workflows/auto-generate-connector-template.yml
+    uses: ./.github/workflows/auto_generate_connector_template.yml
     secrets: inherit
     with:
       openapi-url: https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml
