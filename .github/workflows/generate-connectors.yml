@@ -18,7 +18,7 @@ jobs:
 
   generate-twilio-connector:
     name: Generate Twilio Connector
-    uses: ./.github/workflows/auto-generate-connector-template.yml
+    uses: ./.github/workflows/auto_generate_connector_template.yml
     secrets: inherit
     with:
       openapi-url: https://raw.githubusercontent.com/twilio/twilio-oai/main/spec/json/twilio_api_v2010.json
