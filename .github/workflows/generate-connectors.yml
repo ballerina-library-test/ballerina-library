@@ -30,6 +30,6 @@ jobs:
     uses: ./.github/workflows/auto_generate_connector_template.yml
     secrets: inherit
     with:
-      openapi-url: https://raw.githubusercontent.com/openai/openai-openapi/main/openapi.yaml
+      openapi-url: https://raw.githubusercontent.com/api-specs-test/api-specs/main/openapi/openai/openai-openapi/2.0.0/openapi.yaml
       ballerina-version: "2201.13.0"
       quiet-mode: true
