@@ -1,0 +1,26 @@
+name: Generate Connectors from OpenAPI Specs
+
+on:
+  workflow_dispatch:
+  # Optional: run weekly
+  # schedule:
+  #   - cron: "0 0 * * 0"
+
+jobs:
+  generate-stripe-connector:
+    name: Generate Stripe Connector
+    uses: ./.github/workflows/auto-generate-connector-template.yml
+    secrets: inherit
+    with:
+      openapi-url: https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml
+      ballerina-version: "2201.13.0"
+      quiet-mode: true
+
+  generate-twilio-connector:
+    name: Generate Twilio Connector
+    uses: ./.github/workflows/auto-generate-connector-template.yml
+    secrets: inherit
+    with:
+      openapi-url: https://raw.githubusercontent.com/twilio/twilio-oai/main/spec/json/twilio_api_v2010.json
+      ballerina-version: "2201.13.0"
+      quiet-mode: true
