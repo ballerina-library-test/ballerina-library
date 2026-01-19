@@ -1,0 +1,26 @@
+name: Generate DocuSign Admin Connector
+
+on:
+  workflow_dispatch:
+    inputs:
+      ballerina-version:
+        description: "Ballerina version to use"
+        required: false
+        type: string
+        default: "2201.13.0"
+      quiet-mode:
+        description: "Enable quiet mode for less verbose output"
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  generate-docusign-connector:
+    name: Generate DocuSign Admin Connector
+    uses: ./.github/workflows/auto_generate_connector_template.yml
+    with:
+      openapi-url: "https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/admin.rest.swagger-v2.1.json"
+      ballerina-version: ${{ inputs.ballerina-version }}
+      quiet-mode: ${{ inputs.quiet-mode }}
+      license-file: "license.txt"
+    secrets: inherit
