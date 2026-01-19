@@ -5,12 +5,14 @@ on:
 
 jobs:
   prepare-spec:
-    name: Prepare OpenAPI Spec
+    name: Prepare and Publish OpenAPI Spec
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BALLERINA_BOT_TOKEN }}
 
       - name: Download DocuSign OpenAPI Spec
         run: |
@@ -24,12 +26,14 @@ jobs:
           sed 's|"\\.1/|"/v1/|g' docs/spec/openapi_raw.json > docs/spec/openapi.json
           echo "✅ Corrected OpenAPI written to docs/spec/openapi.json"
 
-      - name: Upload corrected spec artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: corrected-openapi
-          path: docs/spec/openapi.json
+      - name: Commit corrected OpenAPI spec
+        run: |
+          git config user.name "ballerina-bot"
+          git config user.email "ballerina-bot@ballerina.org"
 
+          git add docs/spec/openapi.json
+          git commit -m "[AUTO] Add corrected DocuSign Admin OpenAPI spec" || echo "No changes to commit"
+          git push origin HEAD
 
   generate-connector:
     name: Generate Connector
@@ -37,6 +41,7 @@ jobs:
     uses: ./.github/workflows/auto_generate_connector_template.yml
     secrets: inherit
     with:
-      openapi-url: docs/spec/openapi.json
+      # ⚠️ IMPORTANT: replace <ORG> and <REPO> below
+      openapi-url: https://raw.githubusercontent.com/<ORG>/<REPO>/main/docs/spec/openapi.json
       ballerina-version: "2201.13.0"
       quiet-mode: true
