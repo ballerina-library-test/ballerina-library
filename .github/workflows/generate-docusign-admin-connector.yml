@@ -1,4 +1,4 @@
-name: Generate DocuSign Admin Connector
+name: Generate DocuSign Admin Connector (Fixed Spec)
 
 on:
   workflow_dispatch:
@@ -6,10 +6,39 @@ on:
 jobs:
   generate-docusign-admin:
     name: Generate DocuSign Admin Connector
-    uses: ./.github/workflows/auto_generate_connector_template.yml
-    secrets: inherit
-    with:
-      openapi-url: "https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/admin.rest.swagger-v2.1.json"
-      ballerina-version: "2201.13.0"
-      license-file: "license.txt"     # ✅ THIS IS IMPORTANT
-      quiet-mode: true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------
+      # Step 1 – Download OpenAPI Spec
+      # -----------------------------
+      - name: Download DocuSign OpenAPI Spec
+        run: |
+          mkdir -p docs/spec
+          curl -L \
+            https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/admin.rest.swagger-v2.1.json \
+            -o docs/spec/openapi_raw.json
+
+      # ----------------------------------------------------
+      # Step 2 – Fix invalid path prefixes (.1 -> /v1)
+      # ----------------------------------------------------
+      - name: Fix invalid OpenAPI paths
+        run: |
+          cat docs/spec/openapi_raw.json \
+            | sed 's/"\\.1\//"\\/v1\//g' \
+            > docs/spec/openapi.json
+
+          echo "✅ Corrected OpenAPI written to docs/spec/openapi.json"
+
+      # ----------------------------------------------------
+      # Step 3 – Run reusable connector generation workflow
+      # ----------------------------------------------------
+      - name: Run Connector Automator
+        uses: ./.github/workflows/auto_generate_connector_template.yml
+        with:
+          openapi-url: docs/spec/openapi.json
+          ballerina-version: "2201.13.0"
+          quiet-mode: true
