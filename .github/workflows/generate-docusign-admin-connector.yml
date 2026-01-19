@@ -4,17 +4,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  generate-docusign-admin:
-    name: Generate DocuSign Admin Connector
+  prepare-spec:
+    name: Prepare OpenAPI Spec
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # -----------------------------
-      # Step 1 – Download OpenAPI Spec
-      # -----------------------------
       - name: Download DocuSign OpenAPI Spec
         run: |
           mkdir -p docs/spec
@@ -22,20 +19,24 @@ jobs:
             https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/admin.rest.swagger-v2.1.json \
             -o docs/spec/openapi_raw.json
 
-      # ----------------------------------------------------
-      # Step 2 – Fix invalid path prefixes (.1 -> /v1)
-      # ----------------------------------------------------
       - name: Fix invalid OpenAPI paths
         run: |
           sed 's|"\\.1/|"/v1/|g' docs/spec/openapi_raw.json > docs/spec/openapi.json
           echo "✅ Corrected OpenAPI written to docs/spec/openapi.json"
 
-      # ----------------------------------------------------
-      # Step 3 – Run reusable connector generation workflow
-      # ----------------------------------------------------
-      - name: Run Connector Automator
-        uses: ./.github/workflows/auto_generate_connector_template.yml
+      - name: Upload corrected spec artifact
+        uses: actions/upload-artifact@v4
         with:
-          openapi-url: docs/spec/openapi.json
-          ballerina-version: "2201.13.0"
-          quiet-mode: true
+          name: corrected-openapi
+          path: docs/spec/openapi.json
+
+
+  generate-connector:
+    name: Generate Connector
+    needs: prepare-spec
+    uses: ./.github/workflows/auto_generate_connector_template.yml
+    secrets: inherit
+    with:
+      openapi-url: docs/spec/openapi.json
+      ballerina-version: "2201.13.0"
+      quiet-mode: true
