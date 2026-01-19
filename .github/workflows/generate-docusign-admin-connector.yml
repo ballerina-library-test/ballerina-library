@@ -1,0 +1,14 @@
+name: Generate DocuSign Admin Connector
+
+on:
+  workflow_dispatch:   # allows manual trigger from GitHub UI
+
+jobs:
+  generate-docusign-admin:
+    name: Generate DocuSign Admin Connector
+    uses: ./.github/workflows/auto_generate_connector_template.yml
+    secrets: inherit
+    with:
+      openapi-url: "https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/admin.rest.swagger-v2.1.json"
+      ballerina-version: "2201.13.0"
+      quiet-mode: true
