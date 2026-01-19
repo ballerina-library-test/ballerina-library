@@ -27,10 +27,7 @@ jobs:
       # ----------------------------------------------------
       - name: Fix invalid OpenAPI paths
         run: |
-          cat docs/spec/openapi_raw.json \
-            | sed 's/"\\.1\//"\\/v1\//g' \
-            > docs/spec/openapi.json
-
+          sed 's|"\\.1/|"/v1/|g' docs/spec/openapi_raw.json > docs/spec/openapi.json
           echo "✅ Corrected OpenAPI written to docs/spec/openapi.json"
 
       # ----------------------------------------------------
