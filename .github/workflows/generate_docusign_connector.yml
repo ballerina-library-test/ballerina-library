@@ -15,11 +15,73 @@ on:
         default: true
 
 jobs:
-  generate-docusign-connector:
+  preprocess-spec:
+    name: Preprocess OpenAPI Spec
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BALLERINA_BOT_TOKEN }}
+
+      - name: Download OpenAPI Specification
+        run: |
+          mkdir -p docs/spec
+          cd docs/spec
+          wget -O openapi.json "https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/admin.rest.swagger-v2.1.json"
+          echo "Downloaded DocuSign Admin OpenAPI spec"
+
+      - name: Fix Malformed Paths in OpenAPI Spec
+        run: |
+          cd docs/spec
+          echo "Fixing malformed paths in OpenAPI spec..."
+          
+          # Use jq to fix paths that don't start with /
+          # DocuSign uses ".1/" pattern which should be "/v2.1/"
+          jq '
+            .paths as $oldPaths |
+            .paths = (
+              $oldPaths | to_entries | map(
+                if (.key | startswith("/")) then
+                  .
+                elif (.key | startswith(".1/")) then
+                  .key = "/v2.1" + (.key | ltrimstr(".1"))
+                elif (.key | startswith(".2/")) then
+                  .key = "/v2" + (.key | ltrimstr(".2"))
+                elif (.key | test("^\\.[0-9]+/")) then
+                  .key = "/" + (.key | ltrimstr("."))
+                else
+                  .key = "/" + .key
+                end
+              ) | from_entries
+            )
+          ' openapi.json > openapi_fixed.json
+          
+          # Replace original with fixed version
+          mv openapi_fixed.json openapi.json
+          
+          echo "Fixed malformed paths in OpenAPI spec"
+          
+          # Show some stats
+          echo "Number of paths: $(jq '.paths | keys | length' openapi.json)"
+          echo "Sample paths:"
+          jq '.paths | keys[:5][]' openapi.json
+
+      - name: Commit Preprocessed Spec
+        run: |
+          git config user.name "ballerina-bot"
+          git config user.email "ballerina-bot@ballerina.org"
+          git add docs/spec/openapi.json
+          git commit -m "[AUTOMATED] Add preprocessed DocuSign OpenAPI spec" || echo "No changes to commit"
+          git push origin ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.BALLERINA_BOT_TOKEN }}
+
+  generate-connector:
     name: Generate DocuSign Admin Connector
+    needs: preprocess-spec
     uses: ./.github/workflows/auto_generate_connector_template.yml
     with:
-      openapi-url: "https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/admin.rest.swagger-v2.1.json"
       ballerina-version: ${{ inputs.ballerina-version }}
       quiet-mode: ${{ inputs.quiet-mode }}
       license-file: "license.txt"
