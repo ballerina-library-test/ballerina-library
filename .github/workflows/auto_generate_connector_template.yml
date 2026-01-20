@@ -206,17 +206,16 @@ jobs:
             bal version
           fi
 
-          # create Config.toml for the connector automator. 
-
-          cat > Config.toml << EOF
-          [connector_automator.code_fixer]
-          maxIterations = 3
-
-          [connector_automator.utils]
-          apiKey = "${{ secrets.ANTHROPIC_API_KEY }}"
-          EOF
+          # create Config.toml for the connector automator.
+          echo '[connector_automator.code_fixer]' > Config.toml
+          echo 'maxIterations = 3' >> Config.toml
+          echo '' >> Config.toml
+          echo '[connector_automator.utils]' >> Config.toml
+          echo "apiKey = \"${{ secrets.ANTHROPIC_API_KEY }}\"" >> Config.toml
 
           echo "Created Config.toml"
+          echo "Config.toml contents:"
+          cat Config.toml
 
           # Build pipeline arguments
           PIPELINE_ARGS=("$SPEC_PATH" "$OUTPUT_PATH" "yes")
