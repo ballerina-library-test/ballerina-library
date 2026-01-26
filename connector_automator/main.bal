@@ -4,6 +4,7 @@ import connector_automator.doc_generator;
 import connector_automator.example_generator;
 import connector_automator.sanitizor;
 import connector_automator.test_generator;
+import connector_automator.utils;
 
 import ballerina/io;
 import ballerina/os;
@@ -54,7 +55,10 @@ function handleCommandLineMode(string[] args) returns error? {
         "pipeline" => {
             return runFullPipeline(...remainingArgs);
         }
-        "help"|"--help"|"-h" => {
+        "pipeline-client-only" => {
+            return runClientOnlyPipeline(...remainingArgs);
+        }
+        "help"|"---help"|"-h" => {
             printUsage();
         }
         _ => {
@@ -465,7 +469,6 @@ function runFullPipeline(string... args) returns error? {
 
     boolean quietMode = false;
     boolean autoYes = false;
-    boolean skipExamplesAndTests = false;  // NEW FLAG
     string licenseFile = "";
 
     string[] clientOptions = [];
@@ -474,8 +477,6 @@ function runFullPipeline(string... args) returns error? {
             quietMode = true;
         } else if option == "yes" {
             autoYes = true;
-        } else if option == "skip-examples-tests" {  // NEW OPTION
-            skipExamplesAndTests = true;
         } else if option.startsWith("license=") {
             licenseFile = option;
             clientOptions.push(option);
@@ -490,51 +491,199 @@ function runFullPipeline(string... args) returns error? {
     if quietMode {
         io:println("ℹ  Quiet mode enabled");
     }
-    if skipExamplesAndTests {
-        io:println("ℹ  Skipping examples and tests generation");
+    if licenseFile is string {
+        string licensePath = licenseFile.substring(8); // Remove "license=" prefix
+        if !quietMode {
+            io:println(string `ℹ  License file: ${licensePath}`);
+        }
     }
-    
-    // ... existing code ...
+
+    printPipelineHeader(openApiSpec, outputDir, quietMode);
+
+    // Step 1: Sanitize OpenAPI spec
+    printStepHeader(1, "Sanitizing OpenAPI Specification", quietMode);
+    string[] sanitizeArgs = [openApiSpec, outputDir];
+    sanitizeArgs.push(...pipelineOptions);
+    error? sanitizeResult = sanitizor:executeSanitizor(...sanitizeArgs);
+    if sanitizeResult is error {
+        io:println(string `✗ Sanitization failed: ${sanitizeResult.message()}`);
+        return sanitizeResult;
+    }
+    io:println("✓ Sanitization completed successfully");
+
+    // Step 2: Generate Ballerina client
+    printStepHeader(2, "Generating Ballerina Client", quietMode);
+    string sanitizedSpec = outputDir + "/docs/spec/aligned_ballerina_openapi.json";
+    string clientPath = outputDir + "/ballerina";
+    string[] clientArgs = [sanitizedSpec, clientPath];
+    clientArgs.push(...pipelineOptions);
+    error? clientResult = client_generator:executeClientGen(...clientArgs);
+    if clientResult is error {
+        io:println(string `⚠  Client generation failed: ${clientResult.message()}`);
+        io:println("   Continuing pipeline...");
+    } else {
+        io:println("✓ Client generation completed successfully");
+    }
+
+    // Step 3: Build and validate client
+    printStepHeader(3, "Building and Validating Client", quietMode);
+    string[] buildArgs = [clientPath];
+    buildArgs.push(...pipelineOptions);
+    utils:CommandResult buildResult = utils:executeBalBuild(clientPath, quietMode);
+
+    if utils:hasCompilationErrors(buildResult) {
+        io:println(string `✗ Build validation failed: Client contains compilation errors`);
+        io:println("   Pipeline terminated due to compilation errors");
+        io:println("   Please review the generated client and fix manually");
+
+        if !quietMode && buildResult.stderr.length() > 0 {
+            io:println("   Build errors:");
+            io:println(buildResult.stderr);
+        }
+
+        return error(string `Client build failed: ${buildResult.stderr}`);
+    }
+
+    // If there are warnings but no errors, show them but continue
+    if buildResult.stderr.length() > 0 && !quietMode {
+        io:println("⚠  Build completed with warnings:");
+        io:println(buildResult.stderr);
+    }
 
     io:println("✓ Client built and validated successfully");
 
-    // Step 4: Generate examples (CONDITIONALLY SKIP)
-    if !skipExamplesAndTests {
-        printStepHeader(4, "Generating Examples", quietMode);
-        string[] exampleArgs = [outputDir];
-        exampleArgs.push(...pipelineOptions);
-        error? exampleResult = example_generator:executeExampleGen(...exampleArgs);
-        if exampleResult is error {
-            io:println(string `⚠  Example generation failed: ${exampleResult.message()}`);
-            io:println("   Continuing pipeline...");
-        } else {
-            io:println("✓ Example generation completed successfully");
-        }
+    // Step 4: Generate examples
+    printStepHeader(4, "Generating Examples", quietMode);
+    string[] exampleArgs = [outputDir];
+    exampleArgs.push(...pipelineOptions);
+    error? exampleResult = example_generator:executeExampleGen(...exampleArgs);
+    if exampleResult is error {
+        io:println(string `⚠  Example generation failed: ${exampleResult.message()}`);
+        io:println("   Continuing pipeline...");
     } else {
-        io:println("⊘ Skipping example generation (skip-examples-tests flag set)");
+        io:println("✓ Example generation completed successfully");
     }
 
-    // Step 5: Generate tests (CONDITIONALLY SKIP)
-    if !skipExamplesAndTests {
-        printStepHeader(5, "Generating Tests", quietMode);
-        string sanitizedSpec = outputDir + "/docs/spec/aligned_ballerina_openapi.json";
-        string[] testArgs = [outputDir, sanitizedSpec];
-        testArgs.push(...pipelineOptions);
-        error? testResult = test_generator:executeTestGen(...testArgs);
-        if testResult is error {
-            io:println(string `⚠  Test generation failed: ${testResult.message()}`);
-            io:println("   Continuing pipeline...");
-        } else {
-            io:println("✓ Test generation completed successfully");
-        }
+    // Step 5: Generate tests
+    printStepHeader(5, "Generating Tests", quietMode);
+    string[] testArgs = [outputDir, sanitizedSpec];
+    testArgs.push(...pipelineOptions);
+    error? testResult = test_generator:executeTestGen(...testArgs);
+    if testResult is error {
+        io:println(string `⚠  Test generation failed: ${testResult.message()}`);
+        io:println("   Continuing pipeline...");
     } else {
-        io:println("⊘ Skipping test generation (skip-examples-tests flag set)");
+        io:println("✓ Test generation completed successfully");
     }
 
-    // Step 6: Generate documentation (always run)
+    // Step 6: Generate documentation
     printStepHeader(6, "Generating Documentation", quietMode);
-    // ... rest of the code
+    string[] docArgs = ["generate-all", outputDir];
+    docArgs.push(...pipelineOptions);
+    error? docResult = doc_generator:executeDocGen(...docArgs);
+    if docResult is error {
+        io:println(string `⚠  Documentation generation failed: ${docResult.message()}`);
+    } else {
+        io:println("✓ Documentation generation completed successfully");
+    }
+
+    // Final completion summary
+    printPipelineCompletion(outputDir, quietMode);
+    return;
 }
+
+// Client-only pipeline - generates sanitized spec and client without validation
+function runClientOnlyPipeline(string... args) returns error? {
+    if args.length() < 2 {
+        io:println("✗ Missing required arguments");
+        io:println("  Usage: pipeline-client-only <openapi-spec> <output-dir> [options]");
+        return;
+    }
+
+    string openApiSpec = args[0];
+    string outputDir = args[1];
+    string[] pipelineOptions = args.slice(2);
+
+    boolean quietMode = false;
+    boolean autoYes = false;
+
+    foreach string option in pipelineOptions {
+        if option == "quiet" {
+            quietMode = true;
+        } else if option == "yes" {
+            autoYes = true;
+        }
+    }
+
+    if autoYes && !quietMode {
+        io:println("ℹ  Auto-confirm mode enabled");
+    }
+    if quietMode {
+        io:println("ℹ  Quiet mode enabled");
+    }
+
+    if !quietMode {
+        string sep = createSeparator("=", 70);
+        io:println("");
+        io:println(sep);
+        io:println("Connector Client Generation Pipeline (No Validation)");
+        io:println(sep);
+        io:println(string `Input : ${openApiSpec}`);
+        io:println(string `Output: ${outputDir}`);
+        io:println("");
+        io:println("Pipeline Steps:");
+        io:println("  1. Sanitize OpenAPI specification");
+        io:println("  2. Generate Ballerina client (skip validation)");
+        io:println(sep);
+    }
+
+    // Step 1: Sanitize OpenAPI spec
+    printStepHeader(1, "Sanitizing OpenAPI Specification", quietMode);
+    string[] sanitizeArgs = [openApiSpec, outputDir];
+    sanitizeArgs.push(...pipelineOptions);
+    error? sanitizeResult = sanitizor:executeSanitizor(...sanitizeArgs);
+    if sanitizeResult is error {
+        io:println(string `✗ Sanitization failed: ${sanitizeResult.message()}`);
+        return sanitizeResult;
+    }
+    io:println("✓ Sanitization completed successfully");
+
+    // Step 2: Generate Ballerina client (no validation)
+    printStepHeader(2, "Generating Ballerina Client", quietMode);
+    string sanitizedSpec = outputDir + "/docs/spec/aligned_ballerina_openapi.json";
+    string clientPath = outputDir + "/ballerina";
+    string[] clientArgs = [sanitizedSpec, clientPath];
+    clientArgs.push(...pipelineOptions);
+    error? clientResult = client_generator:executeClientGen(...clientArgs);
+    if clientResult is error {
+        io:println(string `⚠  Client generation encountered issues: ${clientResult.message()}`);
+        io:println("   Continuing without validation...");
+    } else {
+        io:println("✓ Client generation completed");
+    }
+
+    // Final completion summary
+    if !quietMode {
+        string sep = createSeparator("=", 70);
+        io:println("");
+        io:println(sep);
+        io:println("✓ Client Generation Pipeline Completed");
+        io:println(sep);
+        io:println("");
+        io:println("Generated Components:");
+        io:println(string `  • Sanitized specification: ${outputDir}/docs/spec/`);
+        io:println(string `  • Ballerina client: ${outputDir}/ballerina/`);
+        io:println("");
+        io:println("Next Steps:");
+        io:println("  • Review the generated client code");
+        io:println("  • Fix any compilation errors manually if needed");
+        io:println("  • Test with your API credentials");
+        io:println(sep);
+    }
+
+    return;
+}
+
 function printPipelineHeader(string openApiSpec, string outputDir, boolean quietMode) {
     if quietMode {
         return;
@@ -659,7 +808,6 @@ function printUsage() {
     io:println("OPTIONS");
     io:println("  yes      Auto-confirm all prompts");
     io:println("  quiet    Minimal logging output");
-    io:println("  skip-examples-tests    Skip examples and tests generation");
     io:println("");
     io:println("EXAMPLES");
     io:println("  bal run -- sanitize ./openapi.yaml ./output");
