@@ -23,6 +23,11 @@ on:
         required: false
         type: boolean
         default: true
+      skip-to-doc:
+        description: "Skip build validation, examples, and tests; generate only documentation"
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       ANTHROPIC_API_KEY:
@@ -133,7 +138,7 @@ jobs:
       - name: Clone Connector Automator
         run: |
           echo "Cloning connector automator tool from ballerina-library..."
-          git clone -b main https://github.com/ballerina-library-test/ballerina-library.git temp-library
+           git clone -b connector-automation https://github.com/ballerina-library-test/ballerina-library.git temp-library
           cp -r temp-library/connector_automator ./
           rm -rf temp-library
           echo "Connector automator cloned successfully"
@@ -209,22 +214,29 @@ jobs:
             bal version
           fi
 
-          # create Config.toml for the connector automator.
-          echo '[connector_automator.code_fixer]' > Config.toml
-          echo 'maxIterations = 3' >> Config.toml
-          echo '' >> Config.toml
-          echo '[connector_automator.utils]' >> Config.toml
-          echo "apiKey = \"${{ secrets.ANTHROPIC_API_KEY }}\"" >> Config.toml
+          # create Config.toml for the connector automator. 
+
+          cat > Config.toml << EOF
+          [connector_automator.code_fixer]
+          maxIterations = 3
+
+          [connector_automator.utils]
+          apiKey = "${{ secrets.ANTHROPIC_API_KEY }}"
+          EOF
 
           echo "Created Config.toml"
-          echo "Config.toml contents:"
-          cat Config.toml
 
           # Build pipeline arguments
           PIPELINE_ARGS=("$SPEC_PATH" "$OUTPUT_PATH" "yes")
 
           if [ "${{ inputs.quiet-mode }}" = "true" ]; then
             PIPELINE_ARGS+=("quiet")
+          fi
+
+          # Add skip-to-doc flag if enabled
+          if [ "${{ inputs.skip-to-doc }}" = "true" ]; then
+            PIPELINE_ARGS+=("skip-to-doc")
+            echo "ℹ  Skip-to-documentation mode enabled"
           fi
 
           # Add license file if provided
@@ -236,8 +248,8 @@ jobs:
             fi
           fi
         
-          # Run the client-only pipeline (skips validation to allow PR creation)
-          ${{ env.BALLERINA_CMD }} run -- pipeline-client-only "${PIPELINE_ARGS[@]}"
+          # Run the complete pipeline
+          ${{ env.BALLERINA_CMD }} run -- pipeline "${PIPELINE_ARGS[@]}"
 
           echo "Full connector generation pipeline completed"
       - name: Cleanup and Organize Spec Files

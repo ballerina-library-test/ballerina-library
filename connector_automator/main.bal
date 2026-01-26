@@ -55,10 +55,7 @@ function handleCommandLineMode(string[] args) returns error? {
         "pipeline" => {
             return runFullPipeline(...remainingArgs);
         }
-        "pipeline-client-only" => {
-            return runClientOnlyPipeline(...remainingArgs);
-        }
-        "help"|"---help"|"-h" => {
+        "help"|"--help"|"-h" => {
             printUsage();
         }
         _ => {
@@ -421,6 +418,7 @@ function handleFullPipeline() returns error? {
 
     boolean autoYes = getUserConfirmation("Auto-confirm all prompts?");
     boolean quietMode = getUserConfirmation("Enable quiet mode?");
+    boolean skipToDoc = getUserConfirmation("Skip to documentation (skip build/examples/tests)?");
 
     string[] args = [openApiSpec.trim(), outputDir.trim()];
     if autoYes {
@@ -428,6 +426,9 @@ function handleFullPipeline() returns error? {
     }
     if quietMode {
         args.push("quiet");
+    }
+    if skipToDoc {
+        args.push("skip-to-doc");
     }
 
     return runFullPipeline(...args);
@@ -469,6 +470,7 @@ function runFullPipeline(string... args) returns error? {
 
     boolean quietMode = false;
     boolean autoYes = false;
+    boolean skipToDoc = false;
     string licenseFile = "";
 
     string[] clientOptions = [];
@@ -477,6 +479,8 @@ function runFullPipeline(string... args) returns error? {
             quietMode = true;
         } else if option == "yes" {
             autoYes = true;
+        } else if option == "skip-to-doc" {
+            skipToDoc = true;
         } else if option.startsWith("license=") {
             licenseFile = option;
             clientOptions.push(option);
@@ -491,6 +495,9 @@ function runFullPipeline(string... args) returns error? {
     if quietMode {
         io:println("ℹ  Quiet mode enabled");
     }
+    if skipToDoc {
+        io:println("ℹ  Skip-to-documentation mode enabled");
+    }
     if licenseFile is string {
         string licensePath = licenseFile.substring(8); // Remove "license=" prefix
         if !quietMode {
@@ -498,7 +505,7 @@ function runFullPipeline(string... args) returns error? {
         }
     }
 
-    printPipelineHeader(openApiSpec, outputDir, quietMode);
+    printPipelineHeader(openApiSpec, outputDir, quietMode, skipToDoc);
 
     // Step 1: Sanitize OpenAPI spec
     printStepHeader(1, "Sanitizing OpenAPI Specification", quietMode);
@@ -525,7 +532,30 @@ function runFullPipeline(string... args) returns error? {
         io:println("✓ Client generation completed successfully");
     }
 
-    // Step 3: Build and validate client
+    // Check if we should skip to documentation
+    if skipToDoc {
+        io:println("");
+        io:println("ℹ  Skipping steps 3-5 (build validation, examples, tests)");
+        io:println("   Proceeding directly to documentation generation...");
+        io:println("");
+
+        // Step 6: Generate documentation
+        printStepHeader(6, "Generating Documentation", quietMode);
+        string[] docArgsSkip = ["generate-all", outputDir];
+        docArgsSkip.push(...pipelineOptions);
+        error? docResultSkip = doc_generator:executeDocGen(...docArgsSkip);
+        if docResultSkip is error {
+            io:println(string `⚠  Documentation generation failed: ${docResultSkip.message()}`);
+        } else {
+            io:println("✓ Documentation generation completed successfully");
+        }
+
+        // Final completion summary
+        printPipelineCompletion(outputDir, quietMode, skipToDoc);
+        return;
+    }
+
+    // Step 3: Build and validate client (only if not skipping)
     printStepHeader(3, "Building and Validating Client", quietMode);
     string[] buildArgs = [clientPath];
     buildArgs.push(...pipelineOptions);
@@ -588,103 +618,11 @@ function runFullPipeline(string... args) returns error? {
     }
 
     // Final completion summary
-    printPipelineCompletion(outputDir, quietMode);
+    printPipelineCompletion(outputDir, quietMode, false);
     return;
 }
 
-// Client-only pipeline - generates sanitized spec and client without validation
-function runClientOnlyPipeline(string... args) returns error? {
-    if args.length() < 2 {
-        io:println("✗ Missing required arguments");
-        io:println("  Usage: pipeline-client-only <openapi-spec> <output-dir> [options]");
-        return;
-    }
-
-    string openApiSpec = args[0];
-    string outputDir = args[1];
-    string[] pipelineOptions = args.slice(2);
-
-    boolean quietMode = false;
-    boolean autoYes = false;
-
-    foreach string option in pipelineOptions {
-        if option == "quiet" {
-            quietMode = true;
-        } else if option == "yes" {
-            autoYes = true;
-        }
-    }
-
-    if autoYes && !quietMode {
-        io:println("ℹ  Auto-confirm mode enabled");
-    }
-    if quietMode {
-        io:println("ℹ  Quiet mode enabled");
-    }
-
-    if !quietMode {
-        string sep = createSeparator("=", 70);
-        io:println("");
-        io:println(sep);
-        io:println("Connector Client Generation Pipeline (No Validation)");
-        io:println(sep);
-        io:println(string `Input : ${openApiSpec}`);
-        io:println(string `Output: ${outputDir}`);
-        io:println("");
-        io:println("Pipeline Steps:");
-        io:println("  1. Sanitize OpenAPI specification");
-        io:println("  2. Generate Ballerina client (skip validation)");
-        io:println(sep);
-    }
-
-    // Step 1: Sanitize OpenAPI spec
-    printStepHeader(1, "Sanitizing OpenAPI Specification", quietMode);
-    string[] sanitizeArgs = [openApiSpec, outputDir];
-    sanitizeArgs.push(...pipelineOptions);
-    error? sanitizeResult = sanitizor:executeSanitizor(...sanitizeArgs);
-    if sanitizeResult is error {
-        io:println(string `✗ Sanitization failed: ${sanitizeResult.message()}`);
-        return sanitizeResult;
-    }
-    io:println("✓ Sanitization completed successfully");
-
-    // Step 2: Generate Ballerina client (no validation)
-    printStepHeader(2, "Generating Ballerina Client", quietMode);
-    string sanitizedSpec = outputDir + "/docs/spec/aligned_ballerina_openapi.json";
-    string clientPath = outputDir + "/ballerina";
-    string[] clientArgs = [sanitizedSpec, clientPath];
-    clientArgs.push(...pipelineOptions);
-    error? clientResult = client_generator:executeClientGen(...clientArgs);
-    if clientResult is error {
-        io:println(string `⚠  Client generation encountered issues: ${clientResult.message()}`);
-        io:println("   Continuing without validation...");
-    } else {
-        io:println("✓ Client generation completed");
-    }
-
-    // Final completion summary
-    if !quietMode {
-        string sep = createSeparator("=", 70);
-        io:println("");
-        io:println(sep);
-        io:println("✓ Client Generation Pipeline Completed");
-        io:println(sep);
-        io:println("");
-        io:println("Generated Components:");
-        io:println(string `  • Sanitized specification: ${outputDir}/docs/spec/`);
-        io:println(string `  • Ballerina client: ${outputDir}/ballerina/`);
-        io:println("");
-        io:println("Next Steps:");
-        io:println("  • Review the generated client code");
-        io:println("  • Fix any compilation errors manually if needed");
-        io:println("  • Test with your API credentials");
-        io:println(sep);
-    }
-
-    return;
-}
-
-function printPipelineHeader(string openApiSpec, string outputDir, boolean quietMode) {
+function printPipelineHeader(string openApiSpec, string outputDir, boolean quietMode, boolean skipToDoc = false) {
     if quietMode {
         return;
     }
@@ -697,13 +635,26 @@ function printPipelineHeader(string openApiSpec, string outputDir, boolean quiet
     io:println(string `Input : ${openApiSpec}`);
     io:println(string `Output: ${outputDir}`);
     io:println("");
-    io:println("Pipeline Steps:");
-    io:println("  1. Sanitize OpenAPI specification");
-    io:println("  2. Generate Ballerina client");
-    io:println("  3. Build and validate client");
-    io:println("  4. Generate examples");
-    io:println("  5. Generate tests");
-    io:println("  6. Generate documentation");
+
+    if skipToDoc {
+        io:println("Pipeline Steps (Skip-to-Doc Mode):");
+        io:println("  1. Sanitize OpenAPI specification");
+        io:println("  2. Generate Ballerina client");
+        io:println("  6. Generate documentation");
+        io:println("");
+        io:println("Skipped Steps:");
+        io:println("  3. Build and validate client");
+        io:println("  4. Generate examples");
+        io:println("  5. Generate tests");
+    } else {
+        io:println("Pipeline Steps:");
+        io:println("  1. Sanitize OpenAPI specification");
+        io:println("  2. Generate Ballerina client");
+        io:println("  3. Build and validate client");
+        io:println("  4. Generate examples");
+        io:println("  5. Generate tests");
+        io:println("  6. Generate documentation");
+    }
     io:println(sep);
 }
 
@@ -718,7 +669,7 @@ function printStepHeader(int stepNum, string title, boolean quietMode) {
     io:println(sep);
 }
 
-function printPipelineCompletion(string outputDir, boolean quietMode) {
+function printPipelineCompletion(string outputDir, boolean quietMode, boolean skipToDoc = false) {
     string sep = createSeparator("=", 70);
 
     io:println("");
@@ -729,8 +680,12 @@ function printPipelineCompletion(string outputDir, boolean quietMode) {
     io:println("Generated Components:");
     io:println(string `  • Sanitized specification: ${outputDir}/docs/spec/`);
     io:println(string `  • Ballerina client: ${outputDir}/ballerina/`);
-    io:println(string `  • Usage examples: ${outputDir}/examples/`);
-    io:println(string `  • Test suite: ${outputDir}/ballerina/tests/`);
+
+    if !skipToDoc {
+        io:println(string `  • Usage examples: ${outputDir}/examples/`);
+        io:println(string `  • Test suite: ${outputDir}/ballerina/tests/`);
+    }
+
     io:println(string `  • Documentation: ${outputDir}`);
 
     if !quietMode {
@@ -738,20 +693,34 @@ function printPipelineCompletion(string outputDir, boolean quietMode) {
         io:println("What was accomplished:");
         io:println("  • OpenAPI spec enhanced with AI-generated metadata");
         io:println("  • Ballerina client generated with proper conventions");
-        io:println("  • Compilation errors automatically resolved");
-        io:println("  • Realistic usage examples created");
-        io:println("  • Comprehensive test suite with mock server");
-        io:println("  • Complete documentation package");
+
+        if skipToDoc {
+            io:println("  • Complete documentation package");
+            io:println("");
+            io:println("Note: Build validation, examples, and tests were skipped");
+        } else {
+            io:println("  • Compilation errors automatically resolved");
+            io:println("  • Realistic usage examples created");
+            io:println("  • Comprehensive test suite with mock server");
+            io:println("  • Complete documentation package");
+        }
     }
 
     io:println("");
     io:println("Next Steps:");
-    io:println("  • Review generated components for accuracy");
-    io:println("  • Test the client with your API credentials");
-    io:println("  • Customize examples and documentation as needed");
-    io:println(string `  • Build and test: cd ${outputDir}/ballerina && bal test`);
 
-    if !quietMode {
+    if skipToDoc {
+        io:println(string `  • Build the client: cd ${outputDir}/ballerina && bal build`);
+        io:println("  • Generate examples manually if needed");
+        io:println("  • Generate tests manually if needed");
+    } else {
+        io:println("  • Review generated components for accuracy");
+        io:println("  • Test the client with your API credentials");
+        io:println("  • Customize examples and documentation as needed");
+        io:println(string `  • Build and test: cd ${outputDir}/ballerina && bal test`);
+    }
+
+    if !quietMode && !skipToDoc {
         io:println("");
         io:println("Publishing Commands:");
         io:println(string `  cd ${outputDir}/ballerina && bal pack`);
@@ -806,14 +775,16 @@ function printUsage() {
     io:println("    Show this help message");
     io:println("");
     io:println("OPTIONS");
-    io:println("  yes      Auto-confirm all prompts");
-    io:println("  quiet    Minimal logging output");
+    io:println("  yes          Auto-confirm all prompts");
+    io:println("  quiet        Minimal logging output");
+    io:println("  skip-to-doc  Skip build, examples, and tests; generate docs only");
     io:println("");
     io:println("EXAMPLES");
     io:println("  bal run -- sanitize ./openapi.yaml ./output");
     io:println("  bal run -- generate-client ./spec.json ./client");
     io:println("  bal run -- pipeline ./openapi.yaml ./output yes");
     io:println("  bal run -- pipeline ./openapi.yaml ./output yes quiet");
+    io:println("  bal run -- pipeline ./openapi.yaml ./output yes skip-to-doc");
     io:println("");
     io:println("ENVIRONMENT");
     io:println("  ANTHROPIC_API_KEY    Required for AI-powered features");
