@@ -23,7 +23,11 @@ on:
         required: false
         type: boolean
         default: true
-
+      skip-examples-tests:
+        required: false
+        type: boolean
+        default: false
+        description: "Skip examples and tests generation"
     secrets:
       ANTHROPIC_API_KEY:
         required: true
@@ -227,7 +231,10 @@ jobs:
           if [ "${{ inputs.quiet-mode }}" = "true" ]; then
             PIPELINE_ARGS+=("quiet")
           fi
-
+    
+          if [ "${{ inputs.skip-examples-tests }}" = "true" ]; then
+            PIPELINE_ARGS+=("skip-examples-tests")
+          fi  
           # Add license file if provided
           if [ -n "${{ inputs.license-file }}" ]; then
             LICENSE_PATH="${GITHUB_WORKSPACE}/docs/${{ inputs.license-file }}"
@@ -236,10 +243,9 @@ jobs:
               echo "Using license file: $LICENSE_PATH"
             fi
           fi
-        
-          # Run the complete pipeline
+  
+          # Run the pipeline (now with conditional steps)
           ${{ env.BALLERINA_CMD }} run -- pipeline "${PIPELINE_ARGS[@]}"
-
           echo "Full connector generation pipeline completed"
       - name: Cleanup and Organize Spec Files
         run: |
