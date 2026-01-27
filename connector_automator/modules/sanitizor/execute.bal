@@ -459,8 +459,12 @@ function convertAlignedYamlToJson(string alignedSpecPath, boolean quietMode = fa
         return error("Failed to read YAML aligned spec file: " + yamlContent.message());
     }
 
-    // Parse YAML to JSON
-    json|yaml:Error jsonData = yaml:readString(yamlContent);
+    // Sanitize backticks and other problematic characters
+    // Replace backticks with single quotes to prevent YAML parsing errors
+    string sanitizedYaml = regex:replaceAll(yamlContent, "`", "'");
+
+    // Parse sanitized YAML to JSON
+    json|yaml:Error jsonData = yaml:readString(sanitizedYaml);
     if jsonData is yaml:Error {
         return error("Failed to parse YAML content: " + jsonData.message());
     }
