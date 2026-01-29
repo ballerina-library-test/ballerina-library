@@ -418,7 +418,7 @@ function handleFullPipeline() returns error? {
 
     boolean autoYes = getUserConfirmation("Auto-confirm all prompts?");
     boolean quietMode = getUserConfirmation("Enable quiet mode?");
-    boolean skipToDoc = getUserConfirmation("Skip to documentation (skip build/examples/tests)?");
+    boolean regenerate = getUserConfirmation("Is this regenerating an existing connector?");
 
     string[] args = [openApiSpec.trim(), outputDir.trim()];
     if autoYes {
@@ -427,8 +427,8 @@ function handleFullPipeline() returns error? {
     if quietMode {
         args.push("quiet");
     }
-    if skipToDoc {
-        args.push("skip-to-doc");
+    if regenerate {
+        args.push("regenerate");
     }
 
     return runFullPipeline(...args);
@@ -470,7 +470,7 @@ function runFullPipeline(string... args) returns error? {
 
     boolean quietMode = false;
     boolean autoYes = false;
-    boolean skipToDoc = false;
+    boolean regenerate = false;
     string licenseFile = "";
 
     string[] clientOptions = [];
@@ -479,8 +479,8 @@ function runFullPipeline(string... args) returns error? {
             quietMode = true;
         } else if option == "yes" {
             autoYes = true;
-        } else if option == "skip-to-doc" {
-            skipToDoc = true;
+        } else if option == "regenerate" {
+            regenerate = true;
         } else if option.startsWith("license=") {
             licenseFile = option;
             clientOptions.push(option);
@@ -495,8 +495,8 @@ function runFullPipeline(string... args) returns error? {
     if quietMode {
         io:println("ℹ  Quiet mode enabled");
     }
-    if skipToDoc {
-        io:println("ℹ  Skip-to-documentation mode enabled");
+    if regenerate {
+        io:println("ℹ  Regeneration mode: Smart test recovery enabled");
     }
     if licenseFile is string {
         string licensePath = licenseFile.substring(8); // Remove "license=" prefix
@@ -505,7 +505,15 @@ function runFullPipeline(string... args) returns error? {
         }
     }
 
-    printPipelineHeader(openApiSpec, outputDir, quietMode, skipToDoc);
+    if regenerate {
+        return runRegenerationPipeline(openApiSpec, outputDir, pipelineOptions, quietMode, autoYes);
+    } else {
+        return runStandardPipeline(openApiSpec, outputDir, pipelineOptions, quietMode, autoYes);
+    }
+}
+
+function runStandardPipeline(string openApiSpec, string outputDir, string[] pipelineOptions, boolean quietMode, boolean autoYes) returns error? {
+    printPipelineHeader(openApiSpec, outputDir, quietMode, false);
 
     // Step 1: Sanitize OpenAPI spec
     printStepHeader(1, "Sanitizing OpenAPI Specification", quietMode);
@@ -532,30 +540,7 @@ function runFullPipeline(string... args) returns error? {
         io:println("✓ Client generation completed successfully");
     }
 
-    // Check if we should skip to documentation
-    if skipToDoc {
-        io:println("");
-        io:println("ℹ  Skipping steps 3-5 (build validation, examples, tests)");
-        io:println("   Proceeding directly to documentation generation...");
-        io:println("");
-
-        // Step 6: Generate documentation
-        printStepHeader(6, "Generating Documentation", quietMode);
-        string[] docArgsSkip = ["generate-all", outputDir];
-        docArgsSkip.push(...pipelineOptions);
-        error? docResultSkip = doc_generator:executeDocGen(...docArgsSkip);
-        if docResultSkip is error {
-            io:println(string `⚠  Documentation generation failed: ${docResultSkip.message()}`);
-        } else {
-            io:println("✓ Documentation generation completed successfully");
-        }
-
-        // Final completion summary
-        printPipelineCompletion(outputDir, quietMode, skipToDoc);
-        return;
-    }
-
-    // Step 3: Build and validate client (only if not skipping)
+    // Step 3: Build and validate client
     printStepHeader(3, "Building and Validating Client", quietMode);
     string[] buildArgs = [clientPath];
     buildArgs.push(...pipelineOptions);
@@ -596,7 +581,8 @@ function runFullPipeline(string... args) returns error? {
 
     // Step 5: Generate tests
     printStepHeader(5, "Generating Tests", quietMode);
-    string[] testArgs = [outputDir, sanitizedSpec];
+    string sanitizedSpecForTests = outputDir + "/docs/spec/aligned_ballerina_openapi.json";
+    string[] testArgs = [outputDir, sanitizedSpecForTests];
     testArgs.push(...pipelineOptions);
     error? testResult = test_generator:executeTestGen(...testArgs);
     if testResult is error {
@@ -618,11 +604,152 @@ function runFullPipeline(string... args) returns error? {
     }
 
     // Final completion summary
-    printPipelineCompletion(outputDir, quietMode, false);
+    printPipelineCompletion(outputDir, quietMode);
     return;
 }
 
-function printPipelineHeader(string openApiSpec, string outputDir, boolean quietMode, boolean skipToDoc = false) {
+function runRegenerationPipeline(string openApiSpec, string outputDir, string[] pipelineOptions, boolean quietMode, boolean autoYes) returns error? {
+    printPipelineHeader(openApiSpec, outputDir, quietMode, true);
+
+    // Step 1: Sanitize OpenAPI spec
+    printStepHeader(1, "Sanitizing OpenAPI Specification", quietMode);
+    string[] sanitizeArgs = [openApiSpec, outputDir];
+    sanitizeArgs.push(...pipelineOptions);
+    error? sanitizeResult = sanitizor:executeSanitizor(...sanitizeArgs);
+    if sanitizeResult is error {
+        io:println(string `✗ Sanitization failed: ${sanitizeResult.message()}`);
+        return sanitizeResult;
+    }
+    io:println("✓ Sanitization completed successfully");
+
+    // Step 2: Generate Ballerina client
+    printStepHeader(2, "Generating Ballerina Client", quietMode);
+    string sanitizedSpec = outputDir + "/docs/spec/aligned_ballerina_openapi.json";
+    string clientPath = outputDir + "/ballerina";
+    string[] clientArgs = [sanitizedSpec, clientPath];
+    clientArgs.push(...pipelineOptions);
+    error? clientResult = client_generator:executeClientGen(...clientArgs);
+    if clientResult is error {
+        io:println(string `⚠  Client generation failed: ${clientResult.message()}`);
+        io:println("   Continuing pipeline...");
+    } else {
+        io:println("✓ Client generation completed successfully");
+    }
+
+    // Step 3: Build and validate client (FIRST ATTEMPT)
+    printStepHeader(3, "Building and Validating Client (Initial)", quietMode);
+    utils:CommandResult buildResult = utils:executeBalBuild(clientPath, quietMode);
+
+    boolean hadBuildErrors = utils:hasCompilationErrors(buildResult);
+    
+    if hadBuildErrors {
+        io:println("⚠  Initial build failed - likely due to test incompatibilities");
+        io:println("   This is expected for connector regeneration");
+        io:println("   Proceeding with smart test recovery...");
+        
+        if !quietMode && buildResult.stderr.length() > 0 {
+            io:println("   Build errors:");
+            io:println(buildResult.stderr);
+        }
+
+        // Step 4: Regenerate tests FIRST (before examples)
+        printStepHeader(4, "Regenerating Tests for New API Version", quietMode);
+        string[] testArgs = [outputDir, sanitizedSpec];
+        testArgs.push(...pipelineOptions);
+        error? testResult = test_generator:executeTestGen(...testArgs);
+        if testResult is error {
+            io:println(string `✗ Test regeneration failed: ${testResult.message()}`);
+            io:println("   Cannot continue without valid tests");
+            return testResult;
+        }
+        io:println("✓ Test regeneration completed successfully");
+
+        // Step 3 RETRY: Build and validate client again
+        printStepHeader(3, "Building and Validating Client (Retry)", quietMode);
+        utils:CommandResult retryBuildResult = utils:executeBalBuild(clientPath, quietMode);
+        
+        if utils:hasCompilationErrors(retryBuildResult) {
+            io:println(string `✗ Build validation failed even after test regeneration`);
+            io:println("   Manual intervention required");
+            
+            if !quietMode && retryBuildResult.stderr.length() > 0 {
+                io:println("   Build errors:");
+                io:println(retryBuildResult.stderr);
+            }
+            
+            return error(string `Client build failed after test regeneration: ${retryBuildResult.stderr}`);
+        }
+        
+        if retryBuildResult.stderr.length() > 0 && !quietMode {
+            io:println("⚠  Build completed with warnings:");
+            io:println(retryBuildResult.stderr);
+        }
+        
+        io:println("✓ Client built and validated successfully after test regeneration");
+
+        // Step 5: Generate examples (after tests are fixed)
+        printStepHeader(5, "Regenerating Examples for New API Version", quietMode);
+        string[] exampleArgs = [outputDir];
+        exampleArgs.push(...pipelineOptions);
+        error? exampleResult = example_generator:executeExampleGen(...exampleArgs);
+        if exampleResult is error {
+            io:println(string `⚠  Example regeneration failed: ${exampleResult.message()}`);
+            io:println("   Continuing pipeline...");
+        } else {
+            io:println("✓ Example regeneration completed successfully");
+        }
+
+    } else {
+        // No build errors on first attempt - proceed normally
+        if buildResult.stderr.length() > 0 && !quietMode {
+            io:println("⚠  Build completed with warnings:");
+            io:println(buildResult.stderr);
+        }
+        
+        io:println("✓ Client built and validated successfully");
+
+        // Step 4: Generate examples
+        printStepHeader(4, "Generating Examples", quietMode);
+        string[] exampleArgs = [outputDir];
+        exampleArgs.push(...pipelineOptions);
+        error? exampleResult = example_generator:executeExampleGen(...exampleArgs);
+        if exampleResult is error {
+            io:println(string `⚠  Example generation failed: ${exampleResult.message()}`);
+            io:println("   Continuing pipeline...");
+        } else {
+            io:println("✓ Example generation completed successfully");
+        }
+
+        // Step 5: Generate tests
+        printStepHeader(5, "Generating Tests", quietMode);
+        string[] testArgs = [outputDir, sanitizedSpec];
+        testArgs.push(...pipelineOptions);
+        error? testResult = test_generator:executeTestGen(...testArgs);
+        if testResult is error {
+            io:println(string `⚠  Test generation failed: ${testResult.message()}`);
+            io:println("   Continuing pipeline...");
+        } else {
+            io:println("✓ Test generation completed successfully");
+        }
+    }
+
+    // Step 6: Generate documentation
+    printStepHeader(6, "Generating Documentation", quietMode);
+    string[] docArgs = ["generate-all", outputDir];
+    docArgs.push(...pipelineOptions);
+    error? docResult = doc_generator:executeDocGen(...docArgs);
+    if docResult is error {
+        io:println(string `⚠  Documentation generation failed: ${docResult.message()}`);
+    } else {
+        io:println("✓ Documentation generation completed successfully");
+    }
+
+    // Final completion summary
+    printRegenerationCompletion(outputDir, quietMode);
+    return;
+}
+
+function printPipelineHeader(string openApiSpec, string outputDir, boolean quietMode, boolean regenerate) {
     if quietMode {
         return;
     }
@@ -630,22 +757,25 @@ function printPipelineHeader(string openApiSpec, string outputDir, boolean quiet
     string sep = createSeparator("=", 70);
     io:println("");
     io:println(sep);
-    io:println("Connector Automation Pipeline");
+    if regenerate {
+        io:println("Connector Regeneration Pipeline (Smart Test Recovery)");
+    } else {
+        io:println("Connector Automation Pipeline");
+    }
     io:println(sep);
     io:println(string `Input : ${openApiSpec}`);
     io:println(string `Output: ${outputDir}`);
     io:println("");
-
-    if skipToDoc {
-        io:println("Pipeline Steps (Skip-to-Doc Mode):");
+    
+    if regenerate {
+        io:println("Regeneration Pipeline Steps:");
         io:println("  1. Sanitize OpenAPI specification");
         io:println("  2. Generate Ballerina client");
+        io:println("  3. Build and validate client (initial)");
+        io:println("  4. If build fails → Regenerate tests for new API");
+        io:println("     Then retry build validation");
+        io:println("  5. Regenerate examples for new API");
         io:println("  6. Generate documentation");
-        io:println("");
-        io:println("Skipped Steps:");
-        io:println("  3. Build and validate client");
-        io:println("  4. Generate examples");
-        io:println("  5. Generate tests");
     } else {
         io:println("Pipeline Steps:");
         io:println("  1. Sanitize OpenAPI specification");
@@ -669,7 +799,7 @@ function printStepHeader(int stepNum, string title, boolean quietMode) {
     io:println(sep);
 }
 
-function printPipelineCompletion(string outputDir, boolean quietMode, boolean skipToDoc = false) {
+function printPipelineCompletion(string outputDir, boolean quietMode) {
     string sep = createSeparator("=", 70);
 
     io:println("");
@@ -680,12 +810,8 @@ function printPipelineCompletion(string outputDir, boolean quietMode, boolean sk
     io:println("Generated Components:");
     io:println(string `  • Sanitized specification: ${outputDir}/docs/spec/`);
     io:println(string `  • Ballerina client: ${outputDir}/ballerina/`);
-
-    if !skipToDoc {
-        io:println(string `  • Usage examples: ${outputDir}/examples/`);
-        io:println(string `  • Test suite: ${outputDir}/ballerina/tests/`);
-    }
-
+    io:println(string `  • Usage examples: ${outputDir}/examples/`);
+    io:println(string `  • Test suite: ${outputDir}/ballerina/tests/`);
     io:println(string `  • Documentation: ${outputDir}`);
 
     if !quietMode {
@@ -693,38 +819,70 @@ function printPipelineCompletion(string outputDir, boolean quietMode, boolean sk
         io:println("What was accomplished:");
         io:println("  • OpenAPI spec enhanced with AI-generated metadata");
         io:println("  • Ballerina client generated with proper conventions");
-
-        if skipToDoc {
-            io:println("  • Complete documentation package");
-            io:println("");
-            io:println("Note: Build validation, examples, and tests were skipped");
-        } else {
-            io:println("  • Compilation errors automatically resolved");
-            io:println("  • Realistic usage examples created");
-            io:println("  • Comprehensive test suite with mock server");
-            io:println("  • Complete documentation package");
-        }
+        io:println("  • Compilation errors automatically resolved");
+        io:println("  • Realistic usage examples created");
+        io:println("  • Comprehensive test suite with mock server");
+        io:println("  • Complete documentation package");
     }
 
     io:println("");
     io:println("Next Steps:");
+    io:println("  • Review generated components for accuracy");
+    io:println("  • Test the client with your API credentials");
+    io:println("  • Customize examples and documentation as needed");
+    io:println(string `  • Build and test: cd ${outputDir}/ballerina && bal test`);
 
-    if skipToDoc {
-        io:println(string `  • Build the client: cd ${outputDir}/ballerina && bal build`);
-        io:println("  • Generate examples manually if needed");
-        io:println("  • Generate tests manually if needed");
-    } else {
-        io:println("  • Review generated components for accuracy");
-        io:println("  • Test the client with your API credentials");
-        io:println("  • Customize examples and documentation as needed");
-        io:println(string `  • Build and test: cd ${outputDir}/ballerina && bal test`);
-    }
-
-    if !quietMode && !skipToDoc {
+    if !quietMode {
         io:println("");
         io:println("Publishing Commands:");
         io:println(string `  cd ${outputDir}/ballerina && bal pack`);
         io:println(string `  cd ${outputDir}/ballerina && bal push --repository=local`);
+    }
+
+    io:println(sep);
+}
+
+function printRegenerationCompletion(string outputDir, boolean quietMode) {
+    string sep = createSeparator("=", 70);
+
+    io:println("");
+    io:println(sep);
+    io:println("✓ Regeneration Pipeline Completed Successfully");
+    io:println(sep);
+    io:println("");
+    io:println("Regenerated Components:");
+    io:println(string `  • Updated specification: ${outputDir}/docs/spec/`);
+    io:println(string `  • Regenerated client: ${outputDir}/ballerina/`);
+    io:println(string `  • Updated tests: ${outputDir}/ballerina/tests/`);
+    io:println(string `  • Refreshed examples: ${outputDir}/examples/`);
+    io:println(string `  • Updated documentation: ${outputDir}`);
+
+    if !quietMode {
+        io:println("");
+        io:println("What was accomplished:");
+        io:println("  • OpenAPI spec updated and sanitized for new version");
+        io:println("  • Ballerina client regenerated with new API definitions");
+        io:println("  • Tests automatically regenerated to match new schema");
+        io:println("  • Build errors resolved through smart test recovery");
+        io:println("  • Examples updated with new API operations");
+        io:println("  • Documentation refreshed for API changes");
+    }
+
+    io:println("");
+    io:println("Next Steps:");
+    io:println("  • Review API changes and breaking modifications");
+    io:println("  • Test regenerated client with real API credentials");
+    io:println("  • Verify backward compatibility where applicable");
+    io:println("  • Update version numbers and changelog");
+    io:println(string `  • Build and test: cd ${outputDir}/ballerina && bal test`);
+
+    if !quietMode {
+        io:println("");
+        io:println("Important Notes:");
+        io:println("  • Tests were regenerated to match new API schema");
+        io:println("  • Review test changes for correctness");
+        io:println("  • Check for breaking changes in examples");
+        io:println("  • Update migration guide if needed");
     }
 
     io:println(sep);
@@ -775,16 +933,16 @@ function printUsage() {
     io:println("    Show this help message");
     io:println("");
     io:println("OPTIONS");
-    io:println("  yes          Auto-confirm all prompts");
-    io:println("  quiet        Minimal logging output");
-    io:println("  skip-to-doc  Skip build, examples, and tests; generate docs only");
+    io:println("  yes         Auto-confirm all prompts");
+    io:println("  quiet       Minimal logging output");
+    io:println("  regenerate  Enable smart test recovery for connector regeneration");
     io:println("");
     io:println("EXAMPLES");
     io:println("  bal run -- sanitize ./openapi.yaml ./output");
     io:println("  bal run -- generate-client ./spec.json ./client");
     io:println("  bal run -- pipeline ./openapi.yaml ./output yes");
-    io:println("  bal run -- pipeline ./openapi.yaml ./output yes quiet");
-    io:println("  bal run -- pipeline ./openapi.yaml ./output yes skip-to-doc");
+    io:println("  bal run -- pipeline ./openapi.yaml ./output yes regenerate");
+    io:println("  bal run -- pipeline ./openapi.yaml ./output yes quiet regenerate");
     io:println("");
     io:println("ENVIRONMENT");
     io:println("  ANTHROPIC_API_KEY    Required for AI-powered features");
@@ -795,6 +953,7 @@ function printUsage() {
     io:println("  • Intelligent example and test case creation");
     io:println("  • Comprehensive documentation generation");
     io:println("  • Automatic compilation error resolution");
+    io:println("  • Smart test recovery for connector regeneration");
     io:println("  • Complete end-to-end automation pipeline");
     io:println("  • Interactive and command-line interfaces");
     io:println("");
