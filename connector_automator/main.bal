@@ -652,6 +652,17 @@ function runRegenerationPipeline(string openApiSpec, string outputDir, string[] 
             io:println(buildResult.stderr);
         }
 
+        // Clean up old test files before regeneration
+        io:println("   Removing old test files for clean regeneration...");
+        utils:CommandResult cleanupResult = utils:executeCommand(
+            string `rm -rf tests modules/mock.server`,
+            clientPath,
+            quietMode
+        );
+        if cleanupResult.exitCode == 0 {
+            io:println("   ✓ Old tests removed");
+        }
+
         // Step 4: Regenerate tests FIRST (before examples)
         printStepHeader(4, "Regenerating Tests for New API Version", quietMode);
         string[] testArgs = [outputDir, sanitizedSpec];
@@ -670,22 +681,57 @@ function runRegenerationPipeline(string openApiSpec, string outputDir, string[] 
         
         if utils:hasCompilationErrors(retryBuildResult) {
             io:println(string `✗ Build validation failed even after test regeneration`);
-            io:println("   Manual intervention required");
+            io:println("   Attempting additional code fixes...");
             
-            if !quietMode && retryBuildResult.stderr.length() > 0 {
-                io:println("   Build errors:");
-                io:println(retryBuildResult.stderr);
+            // Try code fixer one more time
+            string[] fixerArgs = [clientPath];
+            if autoYes {
+                fixerArgs.push("yes");
+            }
+            if quietMode {
+                fixerArgs.push("quiet");
             }
             
-            return error(string `Client build failed after test regeneration: ${retryBuildResult.stderr}`);
+            error? fixResult = code_fixer:executeCodeFixer(...fixerArgs);
+            if fixResult is error {
+                io:println(string `⚠  Code fixer attempt failed: ${fixResult.message()}`);
+            }
+            
+            // Final build attempt after code fixing
+            utils:CommandResult finalBuildResult = utils:executeBalBuild(clientPath, quietMode);
+            
+            if utils:hasCompilationErrors(finalBuildResult) {
+                io:println(string `✗ Build still failing - manual intervention required`);
+                
+                if !quietMode && finalBuildResult.stderr.length() > 0 {
+                    io:println("   Remaining build errors:");
+                    io:println(finalBuildResult.stderr);
+                }
+                
+                io:println("");
+                io:println("⚠  REGENERATION COMPLETED WITH ERRORS");
+                io:println("   The connector has been partially regenerated but has compilation errors.");
+                io:println("   Common issues to check:");
+                io:println("   • Redeclared symbols in test files - remove duplicate type definitions");
+                io:println("   • Type mismatches - verify test data matches new schema");
+                io:println("   • Missing required fields - check new required fields in types");
+                io:println(string `   • Review errors in: ${clientPath}/tests/`);
+                io:println("");
+                io:println("   Continuing with documentation generation...");
+            } else {
+                if finalBuildResult.stderr.length() > 0 && !quietMode {
+                    io:println("⚠  Build completed with warnings:");
+                    io:println(finalBuildResult.stderr);
+                }
+                io:println("✓ Client built successfully after code fixing");
+            }
+        } else {
+            if retryBuildResult.stderr.length() > 0 && !quietMode {
+                io:println("⚠  Build completed with warnings:");
+                io:println(retryBuildResult.stderr);
+            }
+            io:println("✓ Client built and validated successfully after test regeneration");
         }
-        
-        if retryBuildResult.stderr.length() > 0 && !quietMode {
-            io:println("⚠  Build completed with warnings:");
-            io:println(retryBuildResult.stderr);
-        }
-        
-        io:println("✓ Client built and validated successfully after test regeneration");
 
         // Step 5: Generate examples (after tests are fixed)
         printStepHeader(5, "Regenerating Examples for New API Version", quietMode);
