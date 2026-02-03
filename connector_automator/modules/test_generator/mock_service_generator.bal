@@ -52,61 +52,69 @@ function generateMockServer(string connectorPath, string specPath, boolean quiet
         io:println(string `Total operations found in spec: ${operationCount}`);
     }
 
-    string command;
+    // CRITICAL FIX: bal openapi with --operations flag does NOT generate service files
+    // We must ALWAYS generate without --operations first, then filter the service file later
 
-    if operationCount <= MAX_OPERATIONS {
+    string command = string `bal openapi -i ${specPath} -o ${mockServerDir}`;
+
+    // Track selected operations for later filtering
+    string[]? selectedOperationIds = ();
+
+    if operationCount > MAX_OPERATIONS {
         if !quietMode {
-            io:println(string `Using all ${operationCount} operations`);
-        }
-        command = string `bal openapi -i ${specPath} -o ${mockServerDir}`;
-    } else {
-        if !quietMode {
-            io:println(string `Filtering from ${operationCount} to ${MAX_OPERATIONS} most useful operations`);
+            io:println(string `Will filter from ${operationCount} to ${MAX_OPERATIONS} most useful operations after generation`);
         }
         string operationsList = check selectOperationsUsingAI(specPath, quietMode);
+        selectedOperationIds = regexp:split(re `,`, operationsList);
         if !quietMode {
             io:println(string `Selected operations: ${operationsList}`);
         }
-        command = string `bal openapi -i ${specPath} -o ${mockServerDir} --operations ${operationsList}`;
+    } else {
+        if !quietMode {
+            io:println(string `Using all ${operationCount} operations`);
+        }
     }
 
-    // generate mock service template using openapi tool
+    // Generate mock service WITHOUT --operations flag (this is the key fix)
     utils:CommandResult result = utils:executeCommand(command, ballerinaDir, quietMode);
     if !result.success {
         return error("Failed to generate mock server using ballerina openAPI tool: " + result.stderr);
     }
 
-    // The bal openapi command creates different file names depending on the input
-    // Common patterns: service.bal, <spec_name>_service.bal, aligned_ballerina_openapi_service.bal
-    // We need to find the generated service file and rename it to mock_server.bal
-
+    // Find and rename the generated service file
     string mockServerPathNew = mockServerDir + "/mock_server.bal";
 
-    // Try different possible file names that bal openapi might create
-    string[] possibleFileNames = [
-        "service.bal",
-        "aligned_ballerina_openapi_service.bal",
-        "openapi_service.bal"
-    ];
+    // Scan directory for the service file
+    file:MetaData[] files = check file:readDir(mockServerDir);
 
     boolean fileRenamed = false;
-
-    // First, try to find any *_service.bal file in the directory
-    file:MetaData[] files = check file:readDir(mockServerDir);
+    string serviceFilePath = "";
 
     foreach file:MetaData fileMetadata in files {
         string fileName = fileMetadata.absPath;
-        // Extract just the filename from the full path
         string[] pathParts = regexp:split(re `/`, fileName);
         string actualFileName = pathParts[pathParts.length() - 1];
 
-        // Check if it's a service file (ends with _service.bal or is service.bal)
+        // Check if it's a service file
         if (actualFileName.endsWith("_service.bal") || actualFileName == "service.bal") &&
            actualFileName != "mock_server.bal" {
-            // Found the service file, rename it
+            serviceFilePath = fileName;
             if !quietMode {
                 io:println(string `Found generated service file: ${actualFileName}`);
             }
+
+            // If we need to filter operations, do it now BEFORE renaming
+            if selectedOperationIds is string[] {
+                if !quietMode {
+                    io:println(string `Filtering service to ${selectedOperationIds.length()} operations...`);
+                }
+                check filterServiceOperations(serviceFilePath, selectedOperationIds);
+                if !quietMode {
+                    io:println("✓ Service filtered to selected operations");
+                }
+            }
+
+            // Now rename to mock_server.bal
             check file:rename(fileName, mockServerPathNew);
             if !quietMode {
                 io:println("Renamed to mock_server.bal");
@@ -116,9 +124,7 @@ function generateMockServer(string connectorPath, string specPath, boolean quiet
         }
     }
 
-    // If we didn't find a service file, something went wrong
     if !fileRenamed {
-        // List all files in the directory for debugging
         io:println("✗ Could not find generated service file in mock.server directory");
         if !quietMode {
             io:println("Files in mock.server directory:");
@@ -140,6 +146,89 @@ function generateMockServer(string connectorPath, string specPath, boolean quiet
     }
 
     return;
+}
+
+// NEW FUNCTION: Filter service file to only include selected operations
+function filterServiceOperations(string serviceFilePath, string[] selectedOps) returns error? {
+    string serviceContent = check io:fileReadString(serviceFilePath);
+
+    // Split into lines
+    string[] lines = regexp:split(re `\n`, serviceContent);
+    string[] filteredLines = [];
+
+    boolean inResourceFunction = false;
+    boolean keepCurrentFunction = false;
+    string[] currentFunction = [];
+    int braceDepth = 0;
+
+    foreach string line in lines {
+        // Check if this is a resource function declaration
+        if line.includes("resource function") {
+            inResourceFunction = true;
+            currentFunction = [];
+            braceDepth = 0;
+
+            // Check if this operation should be kept
+            keepCurrentFunction = false;
+            foreach string op in selectedOps {
+                // Match operation ID in the function signature
+                // Example: "resource function get Accounts/..." might match "ListAccount"
+                if line.includes(op) {
+                    keepCurrentFunction = true;
+                    break;
+                }
+            }
+        }
+
+        if inResourceFunction {
+            currentFunction.push(line);
+
+            // Count braces to find end of function
+            if line.includes("{") {
+                braceDepth += countOccurrences(line, "{");
+            }
+            if line.includes("}") {
+                braceDepth -= countOccurrences(line, "}");
+            }
+
+            // End of function
+            if braceDepth == 0 && currentFunction.length() > 1 {
+                if keepCurrentFunction {
+                    // Add this function to output
+                    foreach string funcLine in currentFunction {
+                        filteredLines.push(funcLine);
+                    }
+                }
+                inResourceFunction = false;
+                currentFunction = [];
+            }
+        } else {
+            // Not in a resource function - keep the line (headers, imports, etc.)
+            filteredLines.push(line);
+        }
+    }
+
+    // Write filtered content back
+    string filteredContent = string:'join("\n", ...filteredLines);
+    check io:fileWriteString(serviceFilePath, filteredContent);
+
+    return;
+}
+
+function countOccurrences(string text, string char) returns int {
+    int count = 0;
+    int currentPos = 0;
+
+    while true {
+        int? pos = text.indexOf(char, currentPos);
+        if pos is () {
+            break;
+        }
+        count += 1;
+        currentPos = pos + 1;
+    }
+
+    return count;
 }
 
 function countOperationsInSpec(string specPath) returns int|error {
