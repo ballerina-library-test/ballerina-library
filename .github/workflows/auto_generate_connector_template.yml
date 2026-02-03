@@ -23,6 +23,11 @@ on:
         required: false
         type: boolean
         default: true
+      regenerate-existing:
+        description: "Set to true if regenerating an existing connector for a new OpenAPI spec version"
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       ANTHROPIC_API_KEY:
@@ -188,6 +193,7 @@ jobs:
           echo "Working directory: $(pwd)"
           echo "GITHUB_WORKSPACE: ${GITHUB_WORKSPACE}"
           echo "Ballerina command: ${{ env.BALLERINA_CMD }}"
+          echo "Regenerate existing: ${{ inputs.regenerate-existing }}"
 
           # Verify the spec file exists
           if [ ! -f "$SPEC_PATH" ]; then
@@ -226,6 +232,11 @@ jobs:
 
           if [ "${{ inputs.quiet-mode }}" = "true" ]; then
             PIPELINE_ARGS+=("quiet")
+          fi
+
+          # Add regenerate flag if set
+          if [ "${{ inputs.regenerate-existing }}" = "true" ]; then
+            PIPELINE_ARGS+=("regenerate")
           fi
 
           # Add license file if provided
@@ -304,10 +315,17 @@ jobs:
         id: commitFiles
         run: |
           # Build commit message
-          COMMIT_MSG="[AUTOMATED] [AI] Auto-generate connector from OpenAPI spec
+          if [ "${{ inputs.regenerate-existing }}" = "true" ]; then
+            COMMIT_MSG="[AUTOMATED] [AI] Regenerate connector for new OpenAPI spec version
+
+          Updated connector for new OpenAPI specification version.
+          Generated using Ballerina with AI-powered automation."
+          else
+            COMMIT_MSG="[AUTOMATED] [AI] Auto-generate connector from OpenAPI spec
 
           Complete connector generation using full pipeline with all components.
           Generated using Ballerina with AI-powered automation."
+          fi
 
           # Add all changes
           git add .
@@ -332,9 +350,17 @@ jobs:
         id: createPR
         if: ${{ steps.commitFiles.outputs.hasChanged == 'true' }}
         run: |
+          if [ "${{ inputs.regenerate-existing }}" = "true" ]; then
+            PR_TITLE="[Automated] [AI] Regenerate connector for new OpenAPI spec version"
+            PR_BODY=$'## **This PR contains AI-generated content for connector regeneration that requires review before merging.**\n\n### What was updated:\n- Regenerated Ballerina client library for new OpenAPI spec version\n- Updated tests to match new API schema\n- Refreshed usage examples with new operations\n- Updated documentation for API changes\n\n### Generated using:\n- Ballerina version: ${{ inputs.ballerina-version }}\n- Full automation pipeline with AI-powered improvements\n- Automatic compilation error fixes\n- Smart test regeneration for compatibility\n\n### Before merging:\n- Test examples with real API credentials\n- Verify client methods work with new API version\n- Review breaking changes in the API\n- Validate backward compatibility where possible\n\n**Manual validation is required before production use.**'
+          else
+            PR_TITLE="[Automated] [AI] Auto-generate connector from OpenAPI specification"
+            PR_BODY=$'## **This PR contains AI-generated content that requires review before merging.**\n\n### What was generated:\n- Sanitized OpenAPI specification with AI enhancements\n- Ballerina client library with proper type definitions\n- Usage examples demonstrating key API operations\n- Test suite with mock server implementation\n- Complete documentation package\n\n### Generated using:\n- Ballerina version: ${{ inputs.ballerina-version }}\n- Full automation pipeline with AI-powered improvements\n- Automatic compilation error fixes\n\n### Before merging:\n- Test examples with real API credentials\n- Verify client methods work as expected\n- Review AI-generated descriptions for accuracy\n- Validate mock server responses match actual API\n\n**Manual validation is required before production use.**'
+          fi
+
           prUrl=$(gh pr create \
-            --title "[Automated] [AI] Auto-generate connector from OpenAPI specification" \
-            --body $'## **This PR contains AI-generated content that requires review before merging.**\n\n### What was generated:\n- Sanitized OpenAPI specification with AI enhancements\n- Ballerina client library with proper type definitions\n- Usage examples demonstrating key API operations\n- Test suite with mock server implementation\n- Complete documentation package\n\n### Generated using:\n- Ballerina version: ${{ inputs.ballerina-version }}\n- Full automation pipeline with AI-powered improvements\n- Automatic compilation error fixes\n\n### Before merging:\n- Test examples with real API credentials\n- Verify client methods work as expected\n- Review AI-generated descriptions for accuracy\n- Validate mock server responses match actual API\n\n**Manual validation is required before production use.**' \
+            --title "$PR_TITLE" \
+            --body "$PR_BODY" \
             --base ${{ github.ref }} \
             --head auto-generate-connector)
           echo "prUrl=$prUrl" >> $GITHUB_OUTPUT
