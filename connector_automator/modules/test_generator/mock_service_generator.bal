@@ -32,7 +32,7 @@ function setupMockServerModule(string connectorPath, boolean quietMode = false) 
         }
     }
 
-    // delete auto generated mock.server.bal file
+    // delete auto generated mock.server.bal file (if it exists)
     string mockServerFile = ballerinaDir + "/modules/mock.server/mock.server.bal";
     if check file:test(mockServerFile, file:EXISTS) {
         check file:remove(mockServerFile, file:RECURSIVE);
@@ -63,7 +63,7 @@ function generateMockServer(string connectorPath, string specPath, boolean quiet
         if !quietMode {
             io:println(string `Filtering from ${operationCount} to ${MAX_OPERATIONS} most useful operations`);
         }
-        string operationsList = check selectOperationsUsingAI(specPath);
+        string operationsList = check selectOperationsUsingAI(specPath, quietMode);
         if !quietMode {
             io:println(string `Selected operations: ${operationsList}`);
         }
@@ -73,20 +73,64 @@ function generateMockServer(string connectorPath, string specPath, boolean quiet
     // generate mock service template using openapi tool
     utils:CommandResult result = utils:executeCommand(command, ballerinaDir, quietMode);
     if !result.success {
-        return error("Failed to generate mock server using ballerina openAPI tool" + result.stderr);
+        return error("Failed to generate mock server using ballerina openAPI tool: " + result.stderr);
     }
 
-    // rename mock server
-    string mockServerPathOld = mockServerDir + "/aligned_ballerina_openapi_service.bal";
+    // The bal openapi command creates different file names depending on the input
+    // Common patterns: service.bal, <spec_name>_service.bal, aligned_ballerina_openapi_service.bal
+    // We need to find the generated service file and rename it to mock_server.bal
+
     string mockServerPathNew = mockServerDir + "/mock_server.bal";
-    if check file:test(mockServerPathOld, file:EXISTS) {
-        check file:rename(mockServerPathOld, mockServerPathNew);
-        if !quietMode {
-            io:println("Renamed mock server file");
+
+    // Try different possible file names that bal openapi might create
+    string[] possibleFileNames = [
+        "service.bal",
+        "aligned_ballerina_openapi_service.bal",
+        "openapi_service.bal"
+    ];
+
+    boolean fileRenamed = false;
+
+    // First, try to find any *_service.bal file in the directory
+    file:MetaData[] files = check file:readDir(mockServerDir);
+
+    foreach file:MetaData fileMetadata in files {
+        string fileName = fileMetadata.absPath;
+        // Extract just the filename from the full path
+        string[] pathParts = regexp:split(re `/`, fileName);
+        string actualFileName = pathParts[pathParts.length() - 1];
+
+        // Check if it's a service file (ends with _service.bal or is service.bal)
+        if (actualFileName.endsWith("_service.bal") || actualFileName == "service.bal") &&
+           actualFileName != "mock_server.bal" {
+            // Found the service file, rename it
+            if !quietMode {
+                io:println(string `Found generated service file: ${actualFileName}`);
+            }
+            check file:rename(fileName, mockServerPathNew);
+            if !quietMode {
+                io:println("Renamed to mock_server.bal");
+            }
+            fileRenamed = true;
+            break;
         }
     }
 
-    // delete client.bal
+    // If we didn't find a service file, something went wrong
+    if !fileRenamed {
+        // List all files in the directory for debugging
+        io:println("✗ Could not find generated service file in mock.server directory");
+        if !quietMode {
+            io:println("Files in mock.server directory:");
+            foreach file:MetaData fileMetadata in files {
+                string[] pathParts = regexp:split(re `/`, fileMetadata.absPath);
+                io:println(string `  - ${pathParts[pathParts.length() - 1]}`);
+            }
+        }
+        return error("bal openapi did not generate a service file");
+    }
+
+    // delete client.bal if it exists
     string clientPath = mockServerDir + "/client.bal";
     if check file:test(clientPath, file:EXISTS) {
         check file:remove(clientPath, file:RECURSIVE);
