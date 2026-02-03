@@ -58,7 +58,7 @@ function generateMockServer(string connectorPath, string specPath, boolean quiet
         if !quietMode {
             io:println(string `Using all ${operationCount} operations`);
         }
-        command = string `bal openapi -i ${specPath} -o ${mockServerDir}`;
+        command = string `bal openapi -i ${specPath} -o ${mockServerDir} --mode service`;
     } else {
         if !quietMode {
             io:println(string `Filtering from ${operationCount} to ${MAX_OPERATIONS} most useful operations`);
@@ -67,7 +67,7 @@ function generateMockServer(string connectorPath, string specPath, boolean quiet
         if !quietMode {
             io:println(string `Selected operations: ${operationsList}`);
         }
-        command = string `bal openapi -i ${specPath} -o ${mockServerDir} --operations ${operationsList}`;
+        command = string `bal openapi -i ${specPath} -o ${mockServerDir} --mode service --operations ${operationsList}`;
     }
 
     // generate mock service template using openapi tool
