@@ -150,12 +150,17 @@ jobs:
           # Create docs/spec directory if doesn't exist
           mkdir -p docs/spec
           cd docs/spec
+
+          # Remove any existing openapi files to avoid conflicts
+          rm -f openapi.json openapi.yaml openapi.yml
+
+          # Download based on URL extension
           if [[ "${{ inputs.openapi-url }}" == *.json ]]; then
-            rm -f openapi.json
             wget -O openapi.json "${{ inputs.openapi-url }}"
+            echo "Downloaded as openapi.json"
           elif [[ "${{ inputs.openapi-url }}" == *.yaml || "${{ inputs.openapi-url }}" == *.yml ]]; then
-            rm -f openapi.yaml openapi.yml
             wget -O openapi.yaml "${{ inputs.openapi-url }}"
+            echo "Downloaded as openapi.yaml"
           else
             echo "Unsupported file extension: ${{ inputs.openapi-url }}"
             exit 1
@@ -164,17 +169,39 @@ jobs:
       - name: Read File Extension
         working-directory: docs/spec
         run: |
-          file=$(echo openapi.*)
-          if [[ "$file" == "openapi.*" ]]; then
+          echo "Detecting OpenAPI specification file..."
+
+          # Priority: .json > .yaml > .yml
+          if [ -f "openapi.json" ]; then
+            SPEC_FILE="openapi.json"
+            EXTENSION="json"
+          elif [ -f "openapi.yaml" ]; then
+            SPEC_FILE="openapi.yaml"
+            EXTENSION="yaml"
+          elif [ -f "openapi.yml" ]; then
+            SPEC_FILE="openapi.yml"
+            EXTENSION="yml"
+          else
             echo "Error: No OpenAPI specification found in docs/spec/"
             echo "Either provide openapi-url input or commit a spec file to docs/spec/"
             echo "Supported files: openapi.json, openapi.yaml, openapi.yml"
+            echo ""
+            echo "Current directory contents:"
+            ls -la
             exit 1
           fi
-          ext="${file##*.}"
-          echo "EXTENSION=$ext" >> "$GITHUB_ENV"
-          echo "SPEC_FILE=$file" >> "$GITHUB_ENV"
-          echo "Found OpenAPI spec: $file"
+
+          echo "EXTENSION=$EXTENSION" >> "$GITHUB_ENV"
+          echo "SPEC_FILE=$SPEC_FILE" >> "$GITHUB_ENV"
+          echo "Found OpenAPI spec: $SPEC_FILE"
+
+          # If multiple files exist, warn about it
+          FILE_COUNT=$(ls -1 openapi.* 2>/dev/null | wc -l)
+          if [ "$FILE_COUNT" -gt 1 ]; then
+            echo "Warning: Multiple OpenAPI files found:"
+            ls -1 openapi.*
+            echo "Using: $SPEC_FILE (priority: .json > .yaml > .yml)"
+          fi
 
       - name: Create Branch
         run: |
@@ -280,6 +307,19 @@ jobs:
           # Remove any other aligned files if they exist
           rm -f aligned_ballerina_openapi.yaml aligned_ballerina_openapi.yml
           echo "Removed remaining aligned files"
+
+          # Remove any duplicate original files from download step
+          if [ -f "original_openapi.${{ env.EXTENSION }}" ]; then
+            # Remove other formats that might exist
+            if [ "${{ env.EXTENSION }}" = "json" ]; then
+              rm -f openapi.yaml openapi.yml
+            else
+              rm -f openapi.json
+              if [ "${{ env.EXTENSION }}" = "yaml" ]; then
+                rm -f openapi.yml
+              fi
+            fi
+          fi
 
           # List files after cleanup
           echo "Files after cleanup:"
