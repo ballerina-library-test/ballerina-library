@@ -346,23 +346,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.BALLERINA_BOT_TOKEN }}
 
-      - name: Create Pull Request
-        id: createPR
-        if: ${{ steps.commitFiles.outputs.hasChanged == 'true' }}
-        run: |
-          if [ "${{ inputs.regenerate-existing }}" = "true" ]; then
-            PR_TITLE="[Automated] [AI] Regenerate connector for new OpenAPI spec version"
-            PR_BODY=$'## **This PR contains AI-generated content for connector regeneration that requires review before merging.**\n\n### What was updated:\n- Regenerated Ballerina client library for new OpenAPI spec version\n- Updated tests to match new API schema\n- Refreshed usage examples with new operations\n- Updated documentation for API changes\n\n### Generated using:\n- Ballerina version: ${{ inputs.ballerina-version }}\n- Full automation pipeline with AI-powered improvements\n- Automatic compilation error fixes\n- Smart test regeneration for compatibility\n\n### Before merging:\n- Test examples with real API credentials\n- Verify client methods work with new API version\n- Review breaking changes in the API\n- Validate backward compatibility where possible\n\n**Manual validation is required before production use.**'
-          else
-            PR_TITLE="[Automated] [AI] Auto-generate connector from OpenAPI specification"
-            PR_BODY=$'## **This PR contains AI-generated content that requires review before merging.**\n\n### What was generated:\n- Sanitized OpenAPI specification with AI enhancements\n- Ballerina client library with proper type definitions\n- Usage examples demonstrating key API operations\n- Test suite with mock server implementation\n- Complete documentation package\n\n### Generated using:\n- Ballerina version: ${{ inputs.ballerina-version }}\n- Full automation pipeline with AI-powered improvements\n- Automatic compilation error fixes\n\n### Before merging:\n- Test examples with real API credentials\n- Verify client methods work as expected\n- Review AI-generated descriptions for accuracy\n- Validate mock server responses match actual API\n\n**Manual validation is required before production use.**'
-          fi
-
-          prUrl=$(gh pr create \
-            --title "$PR_TITLE" \
-            --body "$PR_BODY" \
-            --base ${{ github.ref }} \
-            --head auto-generate-connector)
-          echo "prUrl=$prUrl" >> $GITHUB_OUTPUT
-        env:
-          GITHUB_TOKEN: ${{ secrets.BALLERINA_BOT_TOKEN }}
